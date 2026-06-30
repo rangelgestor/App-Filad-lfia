@@ -6,7 +6,7 @@ import {
 import {
   Music, Plus, Search, ChevronLeft, RotateCcw, Minus, Eye, ClipboardPaste,
   Link2, Play, User, LogOut, Crown, Star, Calendar, Users, Check, X, Clock,
-  BookOpen, Heart, HeartHandshake, Send, Trash2, Sprout, Flame, Trophy, Radio, Pencil, Maximize2,
+  BookOpen, Heart, HeartHandshake, Send, Trash2, Sprout, Flame, Trophy, Radio, Pencil, Maximize2, MessageCircle,
 } from "lucide-react";
 
 /* ===================== HELPERS ===================== */
@@ -418,6 +418,11 @@ function Dashboard({ perfil, membros, onOpenSong }) {
   async function removeMusica(id) { await supabase.from("ensaio_louvores").delete().eq("id", id); }
   async function addEscala(memberId, funcao) { await supabase.from("escalas").insert({ ensaio_id: selId, membro_id: memberId, funcao, status: "pendente" }); }
   async function removeEscala(id) { await supabase.from("escalas").delete().eq("id", id); }
+  function avisarWhatsApp() {
+    const linhas = escala.map((e) => { const mem = membros.find((m) => m.id === e.membro_id); return "• " + (mem ? mem.nome : "—") + (e.funcao ? " — " + e.funcao : ""); });
+    const msg = "🎵 Filadélfia Louvor — " + fmtLongo(ensaio.data) + "\n" + linhas.join("\n") + "\n\nConfirme no app: louvoredevocional.netlify.app 🙏";
+    window.open("https://wa.me/?text=" + encodeURIComponent(msg), "_blank");
+  }
 
   if (carregando) return <p className="text-slate-400 text-center py-10">Carregando...</p>;
 
@@ -452,9 +457,12 @@ function Dashboard({ perfil, membros, onOpenSong }) {
           </div>
 
           {ensaio && (<>
-            <div className="flex items-center justify-between mb-5">
+            <div className="flex items-center justify-between mb-5 gap-2">
               <h2 className="font-serif text-2xl text-slate-900">{fmtLongo(ensaio.data)}</h2>
-              {podeEditar && <button onClick={() => { if (window.confirm("Excluir este domingo e sua escala?")) excluirEnsaio(ensaio.id); }} className="flex items-center gap-1 text-slate-300 hover:text-red-500 text-sm"><Trash2 size={15} /></button>}
+              <div className="flex items-center gap-2 flex-shrink-0">
+                {podeEditar && escala.length > 0 && <button onClick={avisarWhatsApp} className="flex items-center gap-1.5 bg-emerald-600 text-white text-sm font-medium px-3 py-1.5 rounded-lg hover:bg-emerald-500"><MessageCircle size={15} /> Avisar</button>}
+                {podeEditar && <button onClick={() => { if (window.confirm("Excluir este domingo e sua escala?")) excluirEnsaio(ensaio.id); }} className="flex items-center gap-1 text-slate-300 hover:text-red-500 text-sm"><Trash2 size={15} /></button>}
+              </div>
             </div>
 
       {minha && minha.status === "pendente" && !recusando && (
