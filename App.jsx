@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "./supabaseClient";
 import {
   parseCifra, transposeChord, transposeKey, FLAT_KEYS, keyDistance, CIFRA_EXEMPLO, SHARP, FLAT,
@@ -6,7 +6,7 @@ import {
 import {
   Music, Plus, Search, ChevronLeft, RotateCcw, Minus, Eye, ClipboardPaste,
   Link2, Play, User, LogOut, Crown, Star, Calendar, Users, Check, X, Clock,
-  BookOpen, Heart, HeartHandshake, Send, Trash2, Sprout, Flame, Trophy, Radio,
+  BookOpen, Heart, HeartHandshake, Send, Trash2, Sprout, Flame, Trophy, Radio, Pencil, Maximize2,
 } from "lucide-react";
 
 /* ===================== HELPERS ===================== */
@@ -33,33 +33,117 @@ function tonicaSharp(tom) {
   return i >= 0 ? SHARP[i] : "C";
 }
 
-const VERSICULOS = {
-  "salmo 23:1": "O Senhor é o meu pastor, nada me faltará.",
-  "salmo 46:1": "Deus é o nosso refúgio e fortaleza, socorro bem presente na angústia.",
-  "filipenses 4:13": "Posso todas as coisas naquele que me fortalece.",
-  "isaías 41:10": "Não temas, porque eu sou contigo; não te assombres, porque eu sou o teu Deus.",
-  "josué 1:9": "Sê forte e corajoso; não temas, nem te espantes, porque o Senhor teu Deus é contigo.",
+const BIBLE_VERSIONS = [{ id: "nvi", nome: "NVI" }, { id: "acf", nome: "ACF" }, { id: "naa", nome: "NAA" }, { id: "ntlh", nome: "NTLH" }];
+const LIVROS = {
+  genesis: "genesis", gn: "genesis", exodo: "exodus", ex: "exodus", levitico: "leviticus", lv: "leviticus",
+  numeros: "numbers", nm: "numbers", deuteronomio: "deuteronomy", dt: "deuteronomy", josue: "joshua", js: "joshua",
+  juizes: "judges", jz: "judges", rute: "ruth", rt: "ruth", "1samuel": "1samuel", "1sm": "1samuel", "2samuel": "2samuel", "2sm": "2samuel",
+  "1reis": "1kings", "1rs": "1kings", "2reis": "2kings", "2rs": "2kings", "1cronicas": "1chronicles", "1cr": "1chronicles", "2cronicas": "2chronicles", "2cr": "2chronicles",
+  esdras: "ezra", ed: "ezra", neemias: "nehemiah", ne: "nehemiah", ester: "esther", et: "esther", jo: "job",
+  salmos: "psalms", salmo: "psalms", sl: "psalms", proverbios: "proverbs", pv: "proverbs", eclesiastes: "ecclesiastes", ec: "ecclesiastes",
+  cantares: "song-of-solomon", canticos: "song-of-solomon", ct: "song-of-solomon", isaias: "isaiah", is: "isaiah",
+  jeremias: "jeremiah", jr: "jeremiah", lamentacoes: "lamentations", lm: "lamentations", ezequiel: "ezekiel", ez: "ezekiel",
+  daniel: "daniel", dn: "daniel", oseias: "hosea", os: "hosea", joel: "joel", jl: "joel", amos: "amos", am: "amos",
+  obadias: "obadiah", ob: "obadiah", jonas: "jonah", jn: "jonah", miqueias: "micah", mq: "micah", naum: "nahum", na: "nahum",
+  habacuque: "habakkuk", hc: "habakkuk", sofonias: "zephaniah", sf: "zephaniah", ageu: "haggai", ag: "haggai",
+  zacarias: "zechariah", zc: "zechariah", malaquias: "malachi", ml: "malachi",
+  mateus: "matthew", mt: "matthew", marcos: "mark", mc: "mark", lucas: "luke", lc: "luke", joao: "john",
+  atos: "acts", at: "acts", romanos: "romans", rm: "romans", "1corintios": "1corinthians", "1co": "1corinthians", "2corintios": "2corinthians", "2co": "2corinthians",
+  galatas: "galatians", gl: "galatians", efesios: "ephesians", ef: "ephesians", filipenses: "philippians", fp: "philippians",
+  colossenses: "colossians", cl: "colossians", "1tessalonicenses": "1thessalonians", "1ts": "1thessalonians", "2tessalonicenses": "2thessalonians", "2ts": "2thessalonians",
+  "1timoteo": "1timothy", "1tm": "1timothy", "2timoteo": "2timothy", "2tm": "2timothy", tito: "titus", tt: "titus", filemom: "philemon", fm: "philemon",
+  hebreus: "hebrews", hb: "hebrews", tiago: "james", tg: "james", "1pedro": "1peter", "1pe": "1peter", "2pedro": "2peter", "2pe": "2peter",
+  "1joao": "1john", "2joao": "2john", "3joao": "3john", judas: "jude", jd: "jude", apocalipse: "revelation", ap: "revelation",
 };
-function buscarVersiculo(ref) { if (!ref) return null; return VERSICULOS[ref.trim().toLowerCase().replace(/\s+/g, " ")] || null; }
-function Versiculo({ refTxt }) {
-  const texto = buscarVersiculo(refTxt);
+function normLivro(s) { return (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, ""); }
+function parseRef(refTxt) {
+  const m = (refTxt || "").match(/^\s*(.+?)\s+(\d+)\s*:\s*(\d+)/);
+  if (!m) return null;
+  const slug = LIVROS[normLivro(m[1])];
+  if (!slug) return null;
+  return { slug, cap: m[2], ver: m[3] };
+}
+async function fetchVersiculo(refTxt, versao) {
+  const p = parseRef(refTxt);
+  if (!p) return null;
+  const tentativas = [p.slug];
+  if (/^\d/.test(p.slug)) tentativas.push(p.slug.replace(/^(\d)/, "$1-"));
+  for (const slug of tentativas) {
+    try {
+      const r = await fetch("https://api.midvash.com/v1/" + (versao || "nvi") + "/" + slug + "/" + p.cap + "/" + p.ver);
+      if (!r.ok) continue;
+      const j = await r.json();
+      const texto = j && j.data && j.data.text;
+      if (texto) return texto;
+    } catch (e) { /* rede/CORS — cai no fallback */ }
+  }
+  return null;
+}
+function Versiculo({ refTxt, versao }) {
+  const [texto, setTexto] = useState(null);
+  const [estado, setEstado] = useState("loading");
+  useEffect(() => {
+    let ativo = true; setEstado("loading"); setTexto(null);
+    fetchVersiculo(refTxt, versao).then((t) => { if (!ativo) return; if (t) { setTexto(t); setEstado("ok"); } else setEstado("vazio"); });
+    return () => { ativo = false; };
+  }, [refTxt, versao]);
   return (
     <div className="border-l-4 border-amber-400 bg-indigo-50/60 rounded-r-lg px-4 py-3 my-3">
-      {texto ? <p className="font-serif italic text-slate-700 leading-relaxed">"{texto}"</p> : <p className="text-sm text-slate-400 italic">Texto carregado automaticamente da Bíblia</p>}
-      <p className="text-xs text-amber-700 font-medium mt-1">{refTxt}</p>
+      {estado === "loading" && <p className="text-sm text-slate-400 italic">Buscando o versículo...</p>}
+      {estado === "ok" && <p className="font-serif italic text-slate-700 leading-relaxed">"{texto}"</p>}
+      {estado === "vazio" && <p className="text-sm text-slate-400 italic">Não encontrei este versículo. Confira a referência (ex: João 3:16).</p>}
+      <p className="text-xs text-amber-700 font-medium mt-1">{refTxt}{estado === "ok" ? " · " + (versao || "nvi").toUpperCase() : ""}</p>
     </div>
   );
 }
-function CifraRender({ corpo, steps, useFlat }) {
+function CifraRender({ corpo, steps, useFlat, fontPx = 15, dark = false, cols = 1 }) {
   const linhas = useMemo(() => parseCifra(corpo), [corpo]);
+  const colClass = cols === 3 ? "columns-3" : cols === 2 ? "columns-2" : "";
+  const corLetra = dark ? "text-slate-100" : "text-slate-800";
+  const corAcorde = dark ? "text-amber-400" : "text-amber-600";
   return (
-    <div className="font-mono text-[15px] leading-tight space-y-1 overflow-x-auto">
+    <div className={"font-mono leading-tight " + colClass} style={{ fontSize: fontPx + "px", columnGap: "2rem" }}>
       {linhas.map((ln, i) => (
-        <div key={i}>
-          {ln.acordes.length > 0 && (<div className="relative h-5">{ln.acordes.map((a, j) => (<span key={j} className="absolute text-amber-600 font-bold whitespace-pre" style={{ left: a.col + "ch" }}>{transposeChord(a.chord, steps, useFlat)}</span>))}</div>)}
-          <div className="whitespace-pre text-slate-800">{ln.letra || "\u00A0"}</div>
+        <div key={i} className="break-inside-avoid mb-1">
+          {ln.acordes.length > 0 && (<div className="relative" style={{ height: "1.35em" }}>{ln.acordes.map((a, j) => (<span key={j} className={"absolute font-bold whitespace-pre " + corAcorde} style={{ left: a.col + "ch" }}>{transposeChord(a.chord, steps, useFlat)}</span>))}</div>)}
+          <div className={"whitespace-pre " + corLetra}>{ln.letra || "\u00A0"}</div>
         </div>
       ))}
+    </div>
+  );
+}
+
+/* ===================== MODO PALCO (tela cheia) ===================== */
+function ModoPalco({ song, steps0, onClose }) {
+  const [steps, setSteps] = useState(steps0 || 0);
+  const [cols, setCols] = useState(2);
+  const [fontPx, setFontPx] = useState(15);
+  const [dark, setDark] = useState(true);
+  const tomAtual = transposeKey(song.tom || "C", steps);
+  const useFlat = FLAT_KEYS.has((tomAtual || "").replace(/m$/, ""));
+  const bg = dark ? "bg-slate-900" : "bg-white";
+  const barBg = dark ? "bg-slate-800" : "bg-stone-100";
+  const fg = dark ? "text-slate-100" : "text-slate-900";
+  const btn = (dark ? "text-slate-300 hover:text-white" : "text-slate-600 hover:text-slate-900") + " flex items-center justify-center rounded";
+  const act = "bg-amber-500 text-indigo-950 flex items-center justify-center rounded font-bold";
+  return (
+    <div className={"fixed inset-0 z-50 flex flex-col " + bg}>
+      <div className={"flex items-center gap-1.5 px-3 py-2 flex-wrap " + barBg}>
+        <span className={"font-serif text-base mr-1 truncate max-w-[40%] " + fg}>{song.titulo}</span>
+        <span className="font-mono font-bold text-amber-500 mr-1">{tomAtual}</span>
+        <button onClick={() => setSteps((s) => s - 1)} className={"w-7 h-7 " + btn}><Minus size={15} /></button>
+        <button onClick={() => setSteps((s) => s + 1)} className={"w-7 h-7 " + btn}><Plus size={15} /></button>
+        <span className={"mx-1 " + (dark ? "text-slate-600" : "text-stone-300")}>|</span>
+        <button onClick={() => setFontPx((f) => Math.max(9, f - 1))} className={"px-1.5 h-7 text-xs " + btn}>A−</button>
+        <button onClick={() => setFontPx((f) => Math.min(30, f + 1))} className={"px-1.5 h-7 text-base " + btn}>A+</button>
+        <span className={"mx-1 " + (dark ? "text-slate-600" : "text-stone-300")}>|</span>
+        {[1, 2, 3].map((c) => (<button key={c} onClick={() => setCols(c)} className={"w-7 h-7 text-sm " + (cols === c ? act : btn)}>{c}</button>))}
+        <button onClick={() => setDark((d) => !d)} className={"px-2 h-7 text-xs ml-1 " + btn}>{dark ? "☀ Claro" : "☾ Escuro"}</button>
+        <button onClick={onClose} className={"ml-auto w-8 h-8 " + btn}><X size={20} /></button>
+      </div>
+      <div className="flex-1 overflow-auto px-4 py-3">
+        <CifraRender corpo={song.corpo} steps={steps} useFlat={useFlat} fontPx={fontPx} dark={dark} cols={cols} />
+      </div>
     </div>
   );
 }
@@ -146,6 +230,7 @@ function PadTab({ perfil, tonica }) {
 function SongView({ song, perfil, onBack }) {
   const [steps, setSteps] = useState(song._steps || 0);
   const [tab, setTab] = useState("cifra");
+  const [palco, setPalco] = useState(false);
   const tomAtual = transposeKey(song.tom || "C", steps);
   const useFlat = FLAT_KEYS.has((tomAtual || "").replace(/m$/, ""));
   const tonica = tonicaSharp(tomAtual);
@@ -168,24 +253,31 @@ function SongView({ song, perfil, onBack }) {
           <button key={t} onClick={() => setTab(t)} className={"px-4 py-1.5 rounded-lg text-sm font-medium transition " + (tab === t ? "bg-white text-indigo-950 shadow-sm" : "text-slate-500")}>{label}</button>
         ))}
       </div>
-      {tab === "cifra" && <div className="bg-white rounded-2xl border border-stone-200 p-5"><CifraRender corpo={song.corpo} steps={steps} useFlat={useFlat} /></div>}
+      {tab === "cifra" && <div className="bg-white rounded-2xl border border-stone-200 p-5"><div className="flex justify-end mb-2"><button onClick={() => setPalco(true)} className="flex items-center gap-1.5 text-sm text-indigo-700 font-medium hover:underline"><Maximize2 size={15} /> Tela cheia</button></div><CifraRender corpo={song.corpo} steps={steps} useFlat={useFlat} /></div>}
       {tab === "letra" && <div className="bg-white rounded-2xl border border-stone-200 p-5 space-y-2 text-lg text-slate-800 leading-relaxed">{letras.map((l, i) => <p key={i}>{l}</p>)}</div>}
       {tab === "video" && <div className="bg-white rounded-2xl border border-stone-200 p-5"><YouTubeEmbed url={song.youtube} /></div>}
       {tab === "pads" && <PadTab perfil={perfil} tonica={tonica} />}
+      {palco && <ModoPalco song={song} steps0={steps} onClose={() => setPalco(false)} />}
     </div>
   );
 }
 
 /* ===================== ADD SONG ===================== */
-function AddSong({ perfil, onCancel, onSaved }) {
-  const [titulo, setTitulo] = useState(""); const [artista, setArtista] = useState(""); const [tom, setTom] = useState("C");
-  const [youtube, setYoutube] = useState(""); const [corpo, setCorpo] = useState(""); const [preview, setPreview] = useState(false);
+function SongForm({ perfil, song, onCancel, onSaved }) {
+  const editando = !!song;
+  const [titulo, setTitulo] = useState(song?.titulo || ""); const [artista, setArtista] = useState(song?.artista === "—" ? "" : (song?.artista || "")); const [tom, setTom] = useState(song?.tom || "C");
+  const [youtube, setYoutube] = useState(song?.youtube || ""); const [corpo, setCorpo] = useState(song?.corpo || ""); const [preview, setPreview] = useState(false);
   const [erro, setErro] = useState(""); const [salvando, setSalvando] = useState(false);
   const podeSalvar = titulo.trim() && corpo.trim();
   const inputCls = "w-full px-3 py-2 rounded-xl border border-stone-200 bg-white focus:outline-none focus:ring-2 focus:ring-amber-400";
   async function salvar() {
     setErro(""); setSalvando(true);
-    const { error } = await supabase.from("louvores").insert({ grupo_id: perfil.grupo_id, titulo, artista, tom, youtube, corpo, criado_por: perfil.id });
+    let error;
+    if (editando) {
+      ({ error } = await supabase.from("louvores").update({ titulo, artista, tom, youtube, corpo, updated_at: new Date().toISOString() }).eq("id", song.id));
+    } else {
+      ({ error } = await supabase.from("louvores").insert({ grupo_id: perfil.grupo_id, titulo, artista, tom, youtube, corpo, criado_por: perfil.id }));
+    }
     setSalvando(false);
     if (error) { setErro(error.message); return; }
     onSaved();
@@ -193,7 +285,7 @@ function AddSong({ perfil, onCancel, onSaved }) {
   return (
     <div className="pb-10">
       <button onClick={onCancel} className="flex items-center gap-1 text-indigo-700 text-sm font-medium mb-4 hover:underline"><ChevronLeft size={16} /> Cancelar</button>
-      <h1 className="font-serif text-3xl text-slate-900 mb-5">Novo louvor</h1>
+      <h1 className="font-serif text-3xl text-slate-900 mb-5">{editando ? "Editar louvor" : "Novo louvor"}</h1>
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
           <div className="col-span-2"><label className="text-sm text-slate-500 mb-1 block">Título</label><input className={inputCls} value={titulo} onChange={(e) => setTitulo(e.target.value)} /></div>
@@ -208,7 +300,7 @@ function AddSong({ perfil, onCancel, onSaved }) {
         {erro && <p className="text-red-500 text-sm">{erro}</p>}
         <div className="flex items-center gap-2">
           <button onClick={() => setPreview((p) => !p)} disabled={!corpo.trim()} className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-stone-200 text-slate-700 text-sm font-medium disabled:opacity-40 hover:border-amber-400"><Eye size={16} /> {preview ? "Ocultar" : "Pré-visualizar"}</button>
-          <button onClick={salvar} disabled={!podeSalvar || salvando} className="flex-1 bg-indigo-950 text-white text-sm font-medium py-2.5 rounded-xl disabled:opacity-40 hover:bg-indigo-900">{salvando ? "Salvando..." : "Salvar louvor"}</button>
+          <button onClick={salvar} disabled={!podeSalvar || salvando} className="flex-1 bg-indigo-950 text-white text-sm font-medium py-2.5 rounded-xl disabled:opacity-40 hover:bg-indigo-900">{salvando ? "Salvando..." : editando ? "Salvar alterações" : "Salvar louvor"}</button>
         </div>
         {preview && corpo.trim() && (<div><p className="text-sm text-slate-500 mb-2">Como vai ficar (tom {tom}):</p><div className="bg-white rounded-2xl border border-stone-200 p-5"><CifraRender corpo={corpo} steps={0} useFlat={FLAT_KEYS.has((tom || "").replace(/m$/, ""))} /></div></div>)}
       </div>
@@ -219,7 +311,7 @@ function AddSong({ perfil, onCancel, onSaved }) {
 /* ===================== REPERTÓRIO ===================== */
 function Repertorio({ perfil }) {
   const [louvores, setLouvores] = useState([]); const [q, setQ] = useState("");
-  const [carregando, setCarregando] = useState(true); const [aberto, setAberto] = useState(null); const [adicionando, setAdicionando] = useState(false);
+  const [carregando, setCarregando] = useState(true); const [aberto, setAberto] = useState(null); const [adicionando, setAdicionando] = useState(false); const [editando, setEditando] = useState(null);
   const podeAdd = perfil.papel === "admin" || perfil.papel === "lider";
   async function carregar() { const { data } = await supabase.from("louvores").select("*").order("created_at", { ascending: false }); setLouvores(data || []); setCarregando(false); }
   useEffect(() => {
@@ -227,7 +319,9 @@ function Repertorio({ perfil }) {
     const ch = supabase.channel("louvores-rt").on("postgres_changes", { event: "*", schema: "public", table: "louvores" }, carregar).subscribe();
     return () => { supabase.removeChannel(ch); };
   }, []);
-  if (adicionando) return <AddSong perfil={perfil} onCancel={() => setAdicionando(false)} onSaved={() => setAdicionando(false)} />;
+  async function excluir(id) { await supabase.from("louvores").delete().eq("id", id); }
+  if (adicionando) return <SongForm perfil={perfil} onCancel={() => setAdicionando(false)} onSaved={() => setAdicionando(false)} />;
+  if (editando) return <SongForm perfil={perfil} song={editando} onCancel={() => setEditando(null)} onSaved={() => setEditando(null)} />;
   if (aberto) return <SongView song={aberto} perfil={perfil} onBack={() => setAberto(null)} />;
   const list = louvores.filter((s) => (s.titulo || "").toLowerCase().includes(q.toLowerCase()));
   return (
@@ -238,77 +332,130 @@ function Repertorio({ perfil }) {
         <div className="text-center py-12 text-slate-400"><Music size={32} className="mx-auto mb-2 opacity-40" /><p>Nenhum louvor ainda.</p></div>
       ) : (
         <div className="space-y-2">{list.map((s) => (
-          <button key={s.id} onClick={() => setAberto(s)} className="w-full flex items-center justify-between bg-white rounded-xl border border-stone-200 p-4 hover:border-amber-400 transition text-left">
-            <div className="flex items-center gap-3"><div className="w-10 h-10 rounded-lg bg-indigo-50 flex items-center justify-center"><Music size={18} className="text-indigo-700" /></div><div><p className="font-medium text-slate-900">{s.titulo}</p><p className="text-sm text-slate-400">{s.artista || "—"}</p></div></div>
-            <span className="font-mono text-amber-600 font-bold">{s.tom || "—"}</span>
-          </button>
+          <div key={s.id} className="flex items-center gap-2 bg-white rounded-xl border border-stone-200 p-4 hover:border-amber-400 transition">
+            <button onClick={() => setAberto(s)} className="flex items-center gap-3 flex-1 min-w-0 text-left">
+              <div className="w-10 h-10 rounded-lg bg-indigo-50 flex items-center justify-center flex-shrink-0"><Music size={18} className="text-indigo-700" /></div>
+              <div className="min-w-0"><p className="font-medium text-slate-900 truncate">{s.titulo}</p><p className="text-sm text-slate-400 truncate">{s.artista || "—"}</p></div>
+            </button>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <span className="font-mono text-amber-600 font-bold">{s.tom || "—"}</span>
+              {podeAdd && <button onClick={() => setEditando(s)} className="text-slate-300 hover:text-indigo-600 p-1"><Pencil size={15} /></button>}
+              {podeAdd && <button onClick={() => { if (window.confirm("Excluir este louvor?")) excluir(s.id); }} className="text-slate-300 hover:text-red-500 p-1"><Trash2 size={15} /></button>}
+            </div>
+          </div>
         ))}</div>
       )}
     </div>
   );
 }
 
-/* ===================== DASHBOARD (escala + playlist) ===================== */
+/* ===================== DASHBOARD (agenda de domingos) ===================== */
+const DIAS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+const MESES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+function dataPartes(d) { if (!d) return null; const [a, m, dia] = d.split("-").map(Number); return new Date(a, m - 1, dia); }
+function fmtCurto(d) { const dt = dataPartes(d); if (!dt) return ""; return dt.getDate() + "/" + (dt.getMonth() + 1); }
+function fmtLongo(d) { const dt = dataPartes(d); if (!dt) return ""; return DIAS[dt.getDay()] + ", " + dt.getDate() + " " + MESES[dt.getMonth()]; }
+function proximoDomingo() { const d = new Date(); d.setDate(d.getDate() + ((7 - d.getDay()) % 7)); return d.toISOString().slice(0, 10); }
+
 function Dashboard({ perfil, membros, onOpenSong }) {
-  const [ensaio, setEnsaio] = useState(null);
+  const [ensaios, setEnsaios] = useState([]); const [selId, setSelId] = useState(null);
   const [playlist, setPlaylist] = useState([]); const [escala, setEscala] = useState([]);
   const [songs, setSongs] = useState([]); const [carregando, setCarregando] = useState(true);
   const [recusando, setRecusando] = useState(false); const [motivo, setMotivo] = useState("");
+  const [novaData, setNovaData] = useState(proximoDomingo()); const [criando, setCriando] = useState(false);
   const podeEditar = perfil.papel === "admin" || perfil.papel === "lider";
+  const selIdRef = useRef(null);
 
-  async function carregar() {
-    const { data: ens } = await supabase.from("ensaios").select("*").order("created_at", { ascending: false }).limit(1).maybeSingle();
-    setEnsaio(ens || null);
-    if (ens) {
-      const { data: pl } = await supabase.from("ensaio_louvores").select("*, louvores(*)").eq("ensaio_id", ens.id).order("ordem");
-      setPlaylist(pl || []);
-      const { data: esc } = await supabase.from("escalas").select("*").eq("ensaio_id", ens.id);
-      setEscala(esc || []);
-    } else { setPlaylist([]); setEscala([]); }
-    const { data: sg } = await supabase.from("louvores").select("id,titulo,tom").order("titulo");
-    setSongs(sg || []);
-    setCarregando(false);
+  async function carregarEnsaios() {
+    const { data } = await supabase.from("ensaios").select("*").order("data", { ascending: true });
+    setEnsaios(data || []); setCarregando(false);
+    return data || [];
+  }
+  async function carregarDetalhe(id) {
+    if (!id) { setPlaylist([]); setEscala([]); return; }
+    const { data: pl } = await supabase.from("ensaio_louvores").select("*, louvores(*)").eq("ensaio_id", id).order("ordem");
+    setPlaylist(pl || []);
+    const { data: esc } = await supabase.from("escalas").select("*").eq("ensaio_id", id);
+    setEscala(esc || []);
   }
   useEffect(() => {
-    carregar();
+    (async () => {
+      const ens = await carregarEnsaios();
+      const { data: sg } = await supabase.from("louvores").select("id,titulo,tom").order("titulo");
+      setSongs(sg || []);
+      if (ens.length) {
+        const hoje = new Date().toISOString().slice(0, 10);
+        const futuro = ens.find((e) => e.data >= hoje) || ens[ens.length - 1];
+        setSelId(futuro.id);
+      }
+    })();
     const ch = supabase.channel("dash-rt")
-      .on("postgres_changes", { event: "*", schema: "public", table: "ensaios" }, carregar)
-      .on("postgres_changes", { event: "*", schema: "public", table: "ensaio_louvores" }, carregar)
-      .on("postgres_changes", { event: "*", schema: "public", table: "escalas" }, carregar).subscribe();
+      .on("postgres_changes", { event: "*", schema: "public", table: "ensaios" }, carregarEnsaios)
+      .on("postgres_changes", { event: "*", schema: "public", table: "ensaio_louvores" }, () => carregarDetalhe(selIdRef.current))
+      .on("postgres_changes", { event: "*", schema: "public", table: "escalas" }, () => carregarDetalhe(selIdRef.current)).subscribe();
     return () => { supabase.removeChannel(ch); };
   }, []);
+  useEffect(() => { selIdRef.current = selId; carregarDetalhe(selId); }, [selId]);
 
   async function criarEnsaio() {
-    const hoje = new Date().toISOString().slice(0, 10);
-    await supabase.from("ensaios").insert({ grupo_id: perfil.grupo_id, titulo: "Culto de Domingo", data: hoje, criado_por: perfil.id });
+    if (!novaData) return; setCriando(true);
+    const { data } = await supabase.from("ensaios").insert({ grupo_id: perfil.grupo_id, titulo: "Culto", data: novaData, criado_por: perfil.id }).select().single();
+    setCriando(false);
+    const ens = await carregarEnsaios();
+    if (data) setSelId(data.id);
+  }
+  async function excluirEnsaio(id) {
+    await supabase.from("ensaios").delete().eq("id", id);
+    const ens = await carregarEnsaios();
+    if (id === selId) setSelId(ens.length ? ens[0].id : null);
   }
   async function responder(status, mot) {
     const minha = escala.find((e) => e.membro_id === perfil.id);
     if (minha) await supabase.from("escalas").update({ status, motivo: mot || "" }).eq("id", minha.id);
     setRecusando(false); setMotivo("");
   }
-  async function addMusica(songId, tom) { await supabase.from("ensaio_louvores").insert({ ensaio_id: ensaio.id, louvor_id: songId, tom_escolhido: tom, ordem: playlist.length }); }
+  async function addMusica(songId, tom) { await supabase.from("ensaio_louvores").insert({ ensaio_id: selId, louvor_id: songId, tom_escolhido: tom, ordem: playlist.length }); }
   async function removeMusica(id) { await supabase.from("ensaio_louvores").delete().eq("id", id); }
-  async function addEscala(memberId, funcao) { await supabase.from("escalas").insert({ ensaio_id: ensaio.id, membro_id: memberId, funcao, status: "pendente" }); }
+  async function addEscala(memberId, funcao) { await supabase.from("escalas").insert({ ensaio_id: selId, membro_id: memberId, funcao, status: "pendente" }); }
   async function removeEscala(id) { await supabase.from("escalas").delete().eq("id", id); }
 
   if (carregando) return <p className="text-slate-400 text-center py-10">Carregando...</p>;
-  if (!ensaio) return (
-    <div className="pb-10 text-center py-12">
-      <Calendar size={32} className="mx-auto mb-3 text-slate-300" />
-      <p className="text-slate-500 mb-4">Nenhum ensaio criado ainda.</p>
-      {podeEditar && <button onClick={criarEnsaio} className="bg-amber-500 text-indigo-950 font-medium px-4 py-2.5 rounded-xl hover:bg-amber-400">Criar ensaio do fim de semana</button>}
-    </div>
-  );
 
+  const ensaio = ensaios.find((e) => e.id === selId) || null;
   const minha = escala.find((e) => e.membro_id === perfil.id);
   const vao = escala.filter((e) => e.status === "vou").length, nao = escala.filter((e) => e.status === "nao_vou").length, pend = escala.filter((e) => e.status === "pendente").length;
   const naoEscalados = membros.filter((m) => !escala.some((e) => e.membro_id === m.id));
 
   return (
     <div className="pb-10">
-      <p className="text-amber-600 font-medium text-sm uppercase tracking-wide">{ensaio.data}</p>
-      <h1 className="font-serif text-3xl text-slate-900 mb-5">{ensaio.titulo}</h1>
+      <div className="flex items-center gap-2 mb-1"><Calendar size={22} className="text-indigo-700" /><h1 className="font-serif text-3xl text-slate-900">Agenda</h1></div>
+      <p className="text-slate-500 mb-4">Domingos e escalas do grupo</p>
+
+      {podeEditar && (
+        <div className="flex items-center gap-2 mb-4 bg-stone-50 rounded-xl p-3 border border-stone-200">
+          <input type="date" value={novaData} onChange={(e) => setNovaData(e.target.value)} className="flex-1 px-3 py-2 rounded-lg border border-stone-200 bg-white text-sm" />
+          <button onClick={criarEnsaio} disabled={!novaData || criando} className="flex items-center gap-1 bg-amber-500 text-indigo-950 text-sm font-medium px-3 py-2 rounded-lg hover:bg-amber-400 disabled:opacity-40"><Plus size={15} /> Domingo</button>
+        </div>
+      )}
+
+      {ensaios.length === 0 ? (
+        <div className="text-center py-12 text-slate-400"><Calendar size={32} className="mx-auto mb-2 opacity-40" /><p>Nenhum domingo na agenda ainda.</p>{podeEditar && <p className="text-sm mt-1">Escolha uma data acima para criar.</p>}</div>
+      ) : (
+        <>
+          <div className="flex gap-2 overflow-x-auto pb-2 mb-5 -mx-1 px-1">
+            {ensaios.map((e) => { const ativo = e.id === selId; const passado = e.data < new Date().toISOString().slice(0, 10); return (
+              <button key={e.id} onClick={() => setSelId(e.id)} className={"flex-shrink-0 flex flex-col items-center px-4 py-2 rounded-xl border transition " + (ativo ? "bg-indigo-950 text-white border-indigo-950" : passado ? "bg-white text-slate-300 border-stone-200" : "bg-white text-slate-700 border-stone-200 hover:border-amber-400")}>
+                <span className="text-[10px] uppercase tracking-wide">{DIAS[dataPartes(e.data)?.getDay() ?? 0]}</span>
+                <span className="font-mono font-bold text-sm">{fmtCurto(e.data)}</span>
+              </button>
+            ); })}
+          </div>
+
+          {ensaio && (<>
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="font-serif text-2xl text-slate-900">{fmtLongo(ensaio.data)}</h2>
+              {podeEditar && <button onClick={() => { if (window.confirm("Excluir este domingo e sua escala?")) excluirEnsaio(ensaio.id); }} className="flex items-center gap-1 text-slate-300 hover:text-red-500 text-sm"><Trash2 size={15} /></button>}
+            </div>
 
       {minha && minha.status === "pendente" && !recusando && (
         <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-5"><div className="flex items-center gap-2 text-amber-900 mb-3"><Clock size={18} /> <span className="text-sm">Você está escalado(a) no {minha.funcao || "ministério"}. Vai poder?</span></div><div className="flex gap-2"><button onClick={() => responder("vou")} className="flex-1 flex items-center justify-center gap-1.5 bg-emerald-600 text-white text-sm font-medium py-2 rounded-lg hover:bg-emerald-500"><Check size={16} /> Vou</button><button onClick={() => setRecusando(true)} className="flex-1 flex items-center justify-center gap-1.5 bg-white border border-stone-300 text-slate-700 text-sm font-medium py-2 rounded-lg hover:border-red-300"><X size={16} /> Não vou</button></div></div>
@@ -345,6 +492,9 @@ function Dashboard({ perfil, membros, onOpenSong }) {
         ); })}</div>
         {podeEditar && naoEscalados.length > 0 && <AdminAddEscala membros={naoEscalados} onAdd={addEscala} />}
       </div>
+          </>)}
+        </>
+      )}
     </div>
   );
 }
@@ -370,7 +520,7 @@ function AdminAddEscala({ membros, onAdd }) {
 }
 
 /* ===================== DEVOCIONAL ===================== */
-function PostCard({ post, perfil, onReagir, onComentar, onRemover }) {
+function PostCard({ post, perfil, versao, onReagir, onComentar, onRemover }) {
   const [txt, setTxt] = useState("");
   const autor = post.membros;
   const amem = (post.devocional_reacoes || []).filter((r) => r.tipo === "amem");
@@ -383,7 +533,7 @@ function PostCard({ post, perfil, onReagir, onComentar, onRemover }) {
     <div className="bg-white rounded-2xl border border-stone-200 p-4">
       <div className="flex items-start justify-between"><div className="flex items-center gap-2"><div className="w-9 h-9 rounded-full bg-indigo-100 flex items-center justify-center"><User size={16} className="text-indigo-700" /></div><div><p className="font-medium text-slate-900 flex items-center gap-1 text-sm">{autor?.nome || "—"}{autor?.papel === "admin" && <Crown size={12} className="text-amber-500" />}{autor?.papel === "lider" && <Star size={11} className="text-indigo-400" />}</p></div></div>{podeRemover && <button onClick={() => onRemover(post.id)} className="text-slate-300 hover:text-red-500 p-1"><Trash2 size={15} /></button>}</div>
       <p className="text-slate-700 mt-3 leading-relaxed">{post.texto}</p>
-      {post.referencia && <Versiculo refTxt={post.referencia} />}
+      {post.referencia && <Versiculo refTxt={post.referencia} versao={versao} />}
       <div className="flex items-center gap-2 mt-2">
         <button onClick={() => onReagir(post, "amem", euAmem)} className={"flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm transition " + (euAmem ? "bg-amber-100 text-amber-800" : "bg-stone-50 text-slate-500 hover:bg-stone-100")}><Heart size={14} className={euAmem ? "fill-amber-500 text-amber-500" : ""} /> Amém {amem.length > 0 && amem.length}</button>
         <button onClick={() => onReagir(post, "orar", euOrar)} className={"flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm transition " + (euOrar ? "bg-indigo-100 text-indigo-800" : "bg-stone-50 text-slate-500 hover:bg-stone-100")}><HeartHandshake size={14} /> Vou orar {orar.length > 0 && orar.length}</button>
@@ -396,7 +546,9 @@ function PostCard({ post, perfil, onReagir, onComentar, onRemover }) {
 function Devocional({ perfil }) {
   const [posts, setPosts] = useState([]); const [carregando, setCarregando] = useState(true);
   const [texto, setTexto] = useState(""); const [ref, setRef] = useState("");
-  const versiculoPreview = buscarVersiculo(ref);
+  const [versao, setVersao] = useState(() => { try { return localStorage.getItem("biblia_versao") || "nvi"; } catch (e) { return "nvi"; } });
+  function mudarVersao(v) { setVersao(v); try { localStorage.setItem("biblia_versao", v); } catch (e) {} }
+  const refValida = !!parseRef(ref);
   async function carregar() {
     const { data } = await supabase.from("devocionais").select("*, membros(nome,papel), devocional_reacoes(membro_id,tipo), devocional_comentarios(id,texto,membros(nome))").order("created_at", { ascending: false });
     setPosts(data || []); setCarregando(false);
@@ -418,15 +570,19 @@ function Devocional({ perfil }) {
   async function remover(postId) { await supabase.from("devocionais").delete().eq("id", postId); }
   return (
     <div className="pb-10">
-      <div className="flex items-center gap-2 mb-1"><BookOpen size={22} className="text-indigo-700" /><h1 className="font-serif text-3xl text-slate-900">Devocional</h1></div><p className="text-slate-500 mb-5">Mural de edificação do grupo</p>
+      <div className="flex items-center gap-2 mb-1"><BookOpen size={22} className="text-indigo-700" /><h1 className="font-serif text-3xl text-slate-900">Devocional</h1></div><p className="text-slate-500 mb-4">Mural de edificação do grupo</p>
+      <div className="flex items-center gap-2 mb-5 flex-wrap">
+        <span className="text-xs text-slate-400">Minha versão da Bíblia:</span>
+        {BIBLE_VERSIONS.map((v) => (<button key={v.id} onClick={() => mudarVersao(v.id)} className={"px-2.5 py-1 rounded-full text-xs font-medium transition " + (versao === v.id ? "bg-indigo-950 text-white" : "bg-stone-100 text-slate-500 hover:bg-stone-200")}>{v.nome}</button>))}
+      </div>
       <div className="bg-white rounded-2xl border border-stone-200 p-4 mb-6">
         <textarea value={texto} onChange={(e) => setTexto(e.target.value)} placeholder="Compartilhe uma palavra, um testemunho, uma oração..." className="w-full px-3 py-2 rounded-xl border border-stone-200 text-sm h-20 focus:outline-none focus:ring-2 focus:ring-amber-400" />
-        <div className="flex items-center gap-2 mt-2"><BookOpen size={16} className="text-slate-400" /><input value={ref} onChange={(e) => setRef(e.target.value)} placeholder="Referência (ex: Salmo 23:1)" className="flex-1 px-3 py-1.5 rounded-lg border border-stone-200 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" /></div>
-        {ref.trim() && (versiculoPreview ? <div className="border-l-4 border-amber-400 bg-indigo-50/60 rounded-r-lg px-3 py-2 mt-2"><p className="font-serif italic text-slate-700 text-sm">"{versiculoPreview}"</p></div> : <p className="text-xs text-slate-400 mt-2 italic">O texto do versículo aparece aqui automaticamente (tente "Salmo 46:1")</p>)}
+        <div className="flex items-center gap-2 mt-2"><BookOpen size={16} className="text-slate-400" /><input value={ref} onChange={(e) => setRef(e.target.value)} placeholder="Referência (ex: João 3:16, Provérbios 3:5)" className="flex-1 px-3 py-1.5 rounded-lg border border-stone-200 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" /></div>
+        {ref.trim() && (refValida ? <Versiculo refTxt={ref} versao={versao} /> : <p className="text-xs text-slate-400 mt-2 italic">Digite no formato Livro Capítulo:Versículo (ex: João 3:16).</p>)}
         <button onClick={publicar} disabled={!texto.trim()} className="w-full mt-3 bg-amber-500 text-indigo-950 text-sm font-medium py-2.5 rounded-xl disabled:opacity-40 hover:bg-amber-400">Publicar no mural</button>
       </div>
       {carregando ? <p className="text-slate-400 text-center py-10">Carregando...</p> : posts.length === 0 ? <p className="text-slate-400 text-center py-10">Seja o primeiro a compartilhar uma palavra.</p> : (
-        <div className="space-y-3">{posts.map((p) => <PostCard key={p.id} post={p} perfil={perfil} onReagir={reagir} onComentar={comentar} onRemover={remover} />)}</div>
+        <div className="space-y-3">{posts.map((p) => <PostCard key={p.id} post={p} perfil={perfil} versao={versao} onReagir={reagir} onComentar={comentar} onRemover={remover} />)}</div>
       )}
     </div>
   );
@@ -451,30 +607,35 @@ function VideoPlayer({ video, jaConcluido, onConcluir, onBack }) {
     </div>
   );
 }
-function AddVideo({ perfil, onCancel, onSaved }) {
-  const [titulo, setTitulo] = useState(""); const [youtube, setYoutube] = useState(""); const [salvando, setSalvando] = useState(false);
+function VideoForm({ perfil, video, onCancel, onSaved }) {
+  const editando = !!video;
+  const [titulo, setTitulo] = useState(video?.titulo || ""); const [youtube, setYoutube] = useState(video?.youtube || ""); const [salvando, setSalvando] = useState(false);
   const inputCls = "w-full px-3 py-2 rounded-xl border border-stone-200 bg-white focus:outline-none focus:ring-2 focus:ring-amber-400";
   async function salvar() {
     setSalvando(true);
-    await supabase.from("videos").update({ semana_atual: false }).eq("grupo_id", perfil.grupo_id);
-    await supabase.from("videos").insert({ grupo_id: perfil.grupo_id, titulo, youtube, semana_atual: true, postado_por: perfil.id });
+    if (editando) {
+      await supabase.from("videos").update({ titulo, youtube }).eq("id", video.id);
+    } else {
+      await supabase.from("videos").update({ semana_atual: false }).eq("grupo_id", perfil.grupo_id);
+      await supabase.from("videos").insert({ grupo_id: perfil.grupo_id, titulo, youtube, semana_atual: true, postado_por: perfil.id });
+    }
     setSalvando(false); onSaved();
   }
   return (
     <div className="pb-10">
       <button onClick={onCancel} className="flex items-center gap-1 text-indigo-700 text-sm font-medium mb-4 hover:underline"><ChevronLeft size={16} /> Cancelar</button>
-      <h1 className="font-serif text-3xl text-slate-900 mb-5">Novo conteúdo</h1>
+      <h1 className="font-serif text-3xl text-slate-900 mb-5">{editando ? "Editar conteúdo" : "Novo conteúdo"}</h1>
       <div className="space-y-4">
         <div><label className="text-sm text-slate-500 mb-1 block">Título do vídeo</label><input className={inputCls} value={titulo} onChange={(e) => setTitulo(e.target.value)} placeholder="Ex: Vivendo pela fé" /></div>
         <div><label className="text-sm text-slate-500 mb-1 block">Link do YouTube</label><input className={inputCls} value={youtube} onChange={(e) => setYoutube(e.target.value)} placeholder="https://youtube.com/..." /></div>
-        <button onClick={salvar} disabled={!titulo.trim() || salvando} className="w-full bg-indigo-950 text-white text-sm font-medium py-2.5 rounded-xl disabled:opacity-40 hover:bg-indigo-900">{salvando ? "Publicando..." : "Publicar para o grupo"}</button>
+        <button onClick={salvar} disabled={!titulo.trim() || salvando} className="w-full bg-indigo-950 text-white text-sm font-medium py-2.5 rounded-xl disabled:opacity-40 hover:bg-indigo-900">{salvando ? "Salvando..." : editando ? "Salvar alterações" : "Publicar para o grupo"}</button>
       </div>
     </div>
   );
 }
 function Crescer({ perfil, membros }) {
   const [videos, setVideos] = useState([]); const [progresso, setProgresso] = useState([]); const [carregando, setCarregando] = useState(true);
-  const [aberto, setAberto] = useState(null); const [adicionando, setAdicionando] = useState(false);
+  const [aberto, setAberto] = useState(null); const [adicionando, setAdicionando] = useState(false); const [editando, setEditando] = useState(null);
   const podeEditar = perfil.papel === "admin" || perfil.papel === "lider";
   async function carregar() {
     const { data: vd } = await supabase.from("videos").select("*, membros(nome)").order("created_at", { ascending: false });
@@ -501,13 +662,15 @@ function Crescer({ perfil, membros }) {
       await supabase.from("membros").update({ streak: (meu?.streak || 0) + 1 }).eq("id", perfil.id);
     }
   }
+  async function excluir(id) { await supabase.from("videos").delete().eq("id", id); }
 
   const ranking = useMemo(() => membros.map((m) => {
     const feitos = progresso.filter((p) => p.membro_id === m.id && p.concluido).length;
     return { ...m, feitos, pontos: feitos * 10 + (m.streak || 0) * 5 };
   }).sort((a, b) => b.pontos - a.pontos), [membros, progresso]);
 
-  if (adicionando) return <AddVideo perfil={perfil} onCancel={() => setAdicionando(false)} onSaved={() => setAdicionando(false)} />;
+  if (adicionando) return <VideoForm perfil={perfil} onCancel={() => setAdicionando(false)} onSaved={() => setAdicionando(false)} />;
+  if (editando) return <VideoForm perfil={perfil} video={editando} onCancel={() => setEditando(null)} onSaved={() => setEditando(null)} />;
   if (aberto) { const v = videos.find((x) => x.id === aberto); const jc = progresso.some((p) => p.video_id === aberto && p.membro_id === perfil.id && p.concluido); return <VideoPlayer video={v} jaConcluido={jc} onConcluir={() => concluir(v)} onBack={() => setAberto(null)} />; }
   if (carregando) return <p className="text-slate-400 text-center py-10">Carregando...</p>;
 
@@ -515,11 +678,17 @@ function Crescer({ perfil, membros }) {
     <div className="pb-10">
       <div className="flex items-start justify-between mb-1"><div><div className="flex items-center gap-2"><Sprout size={22} className="text-emerald-600" /><h1 className="font-serif text-3xl text-slate-900">Crescer</h1></div><p className="text-slate-500">Conteúdo de edificação do grupo</p></div>{podeEditar && <button onClick={() => setAdicionando(true)} className="flex items-center gap-1.5 bg-amber-500 text-indigo-950 text-sm font-medium px-3 py-2 rounded-xl hover:bg-amber-400"><Plus size={16} /> Vídeo</button>}</div>
       <div className="space-y-2 my-5">{videos.length === 0 ? <p className="text-slate-400 text-center py-8">Nenhum conteúdo ainda.</p> : videos.map((v) => { const jc = progresso.some((p) => p.video_id === v.id && p.membro_id === perfil.id && p.concluido); return (
-        <button key={v.id} onClick={() => setAberto(v.id)} className="w-full flex items-center gap-3 bg-white rounded-xl border border-stone-200 p-4 hover:border-amber-400 transition text-left">
-          <div className="w-12 h-12 rounded-lg bg-indigo-950 flex items-center justify-center flex-shrink-0"><Play size={18} className="text-amber-500" /></div>
-          <div className="flex-1 min-w-0"><p className="font-medium text-slate-900 truncate">{v.titulo}</p><p className="text-sm text-slate-400">{v.semana_atual ? "Esta semana" : "Anterior"} · por {v.membros?.nome || "—"}</p></div>
-          {jc ? <span className="flex items-center gap-1 text-emerald-600 text-sm font-medium flex-shrink-0"><Check size={16} /> Assistido</span> : v.semana_atual ? <span className="text-amber-600 text-xs font-medium bg-amber-50 px-2 py-1 rounded-full flex-shrink-0">Nova</span> : null}
-        </button>
+        <div key={v.id} className="flex items-center gap-3 bg-white rounded-xl border border-stone-200 p-4 hover:border-amber-400 transition">
+          <button onClick={() => setAberto(v.id)} className="flex items-center gap-3 flex-1 min-w-0 text-left">
+            <div className="w-12 h-12 rounded-lg bg-indigo-950 flex items-center justify-center flex-shrink-0"><Play size={18} className="text-amber-500" /></div>
+            <div className="flex-1 min-w-0"><p className="font-medium text-slate-900 truncate">{v.titulo}</p><p className="text-sm text-slate-400">{v.semana_atual ? "Esta semana" : "Anterior"} · por {v.membros?.nome || "—"}</p></div>
+          </button>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {jc ? <span className="flex items-center gap-1 text-emerald-600 text-sm font-medium"><Check size={16} /> Assistido</span> : v.semana_atual ? <span className="text-amber-600 text-xs font-medium bg-amber-50 px-2 py-1 rounded-full">Nova</span> : null}
+            {podeEditar && <button onClick={() => setEditando(v)} className="text-slate-300 hover:text-indigo-600 p-1"><Pencil size={15} /></button>}
+            {podeEditar && <button onClick={() => { if (window.confirm("Excluir este vídeo?")) excluir(v.id); }} className="text-slate-300 hover:text-red-500 p-1"><Trash2 size={15} /></button>}
+          </div>
+        </div>
       ); })}</div>
       <div className="flex items-center gap-2 mb-3 mt-7"><Trophy size={18} className="text-amber-500" /><h2 className="font-medium text-slate-900">Ranking de fidelidade</h2></div>
       <p className="text-xs text-slate-400 mb-3 leading-relaxed">Pontos por conteúdo concluído e por sequência de semanas — premia a constância, não o tempo de tela.</p>
